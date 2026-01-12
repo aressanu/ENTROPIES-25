@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+import sys, os, re
+import numpy as np
+import sympy as sp
+import glob
+
+# =========================
+# CONSTANTS
+# =========================
+k = 1.380649e-23  # J/K
+mmol = 0.12015
+nmol = 512
+NA = 6.02214076e23
+massa = nmol * mmol / NA
+
+# =========================
+# FUNCIONS D'ERROR
+# =========================
+def error_p(pi, e):
+    p, sigma_p = sp.symbols('p sigma_p')
+    f = p * sp.log(p)
+    df_dp = sp.diff(f, p)
+    sigma_f = sp.sqrt((df_dp * sigma_p)**2)
+    return float(sigma_f.subs({p: pi, sigma_p: e}).evalf())
+
+# =========================
+# ENTROPIA ORIENTACIONAL
+# =========================
+def entropia_orientacional(fname, int_bins=65):
+    llth, llphi, llpsi = [], [], []
+
+    with open(fname) as f:
+        for _ in range(4):
+            f.readline()
+        for _ in range(1000):
+            for _ in range(512):
+                p = f.readline().split()
+                llth.append(float(p[8]))
+                llphi.append(float(p[9]))
+                llpsi.append(float(p[10]))
+            f.readline()
+
+    intervals = [
+        np.linspace(-1, 1, int_bins),
+        np.linspace(-180, 180, int_bins),
+        np.linspace(-180, 180, int_bins)
+    ]
+
+    hist, _ = np.histogramdd((llth, llphi, llpsi), bins=intervals, density=True)
+
+    dades = hist.flatten()
+    des = np.std(dades, ddof=1) / np.sqrt(len(dades))
+
+    Ath = 2 / int_bins
+    Aph = 360 / int_bins
+    Aps = 360 / int_bins
+
+    p = hist * Ath * Aph * Aps
+
+    sumi, var = 0.0, 0.0
+    for pm in p.flatten():
+        if pm > 0:
+            sumi += pm * np.log(pm)
+            var += error_p(pm, des * Ath * Aph * Aps)**2
+
+    S = (-k * sumi + k * np.log(Ath * Aph * Aps)) / massa * nmol
+    err = np.sqrt(var) * k / massa
+    return S, err
+
+# =========================
+# MAIN
+# =========================
+if len(sys.argv) != 2:
+    print(" ^zs: python3 entropy_from_ang.py ang_360_2_6.dat")
+    sys.exit(1)
+
+fname = sys.argv[1]
+
+m = re.search(r"ang_(\d+)_2_6\.dat", os.path.basename(fname))
+if not m:
+    raise RuntimeError("No puc extreure T del nom del fitxer")
+
+T = int(m.group(1))
+
+S, err = entropia_orientacional(fname)
+
+# --- sortida ---
+outfile = "../S_orientacional_vs_T.txt"
+write_header = not os.path.exists(outfile)
+
+with open(outfile, "a") as f:
+    if write_header:
+        f.write("# T(K)   S_ori(J/kg K)   err_S\n")
+    f.write(f"{T:6d} {S:14.6e} {err:14.6e}\n")
+
+print(f"[OK] T={T}  S_ori={S:.4e}    {err:.2e}")
